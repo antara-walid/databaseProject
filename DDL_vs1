@@ -1,0 +1,524 @@
+-- #############################################################################
+-- # SECTION 1 : MODÉLISATION DES COMPÉTITIONS ET DE LEUR SPÉCIALISATION       #
+-- # ------------------------------------------------------------------------- #
+-- # Cette section met en place un modèle de généralisation/spécialisation    #
+-- #  où une "Competition" est une entité mère qui se spécialise en  
+-- # "League" ou en "Championship", avec des triggers pour garantir une       #
+-- # l'intégrité des données.                                          #
+-- #############################################################################
+
+-- =============================================================================
+-- TABLE 1.1 : COMPETITION (ENTITÉ MÈRE)
+-- =============================================================================
+CREATE TABLE Competition (
+    ID_Competition SERIAL CONSTRAINT PK_Competition PRIMARY KEY,
+    --  booléens pour définir le type exact de la compétition.
+    IS_League BOOLEAN NOT NULL,
+    IS_Championship BOOLEAN NOT NULL,
+    Name VARCHAR(55) NOT NULL,
+    -- Contrainte de vérification fondamentale (XOR logique).
+    -- Elle garantit qu'une compétition est EXCLUSIVEMENT une League OU un Championship.
+    CONSTRAINT chk_league_or_championship CHECK (
+        (IS_League AND NOT IS_Championship) OR 
+        (NOT IS_League AND IS_Championship)
+    )
+);
+
+-- =============================================================================
+-- TABLES 1.2 : LEAGUE ET CHAMPIONSHIP (ENTITÉS FILLES)
+-- =============================================================================
+CREATE TABLE League (
+    -- La clé primaire est aussi une clé étrangère
+    ID_Competition INT NOT NULL Constraint PK_League Primary Key,
+    Constraint FK_League_Competition Foreign Key(ID_Competition) REFERENCES Competition
+);
+
+Create TABLE Championship(
+    -- Logique identique pour la spécialisation Championship.
+    ID_Competition INT NOT NULL Constraint PK_Championship Primary Key,
+    Constraint FK_Championship_Competition Foreign Key(ID_Competition) REFERENCES Competition
+);
+
+-- =============================================================================
+-- TRIGGER 1.3 : VERROUILLAGE DU TYPE DE COMPÉTITION APRÈS CRÉATION
+-- =============================================================================
+-- Fonction qui interdit la modification des booléens de type.
+CREATE OR REPLACE FUNCTION prevent_competition_type_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Cette règle métier assure la stabilité du modèle : une fois une League créée, elle ne peut pas devenir un Championship.
+    -- On compare la nouvelle valeur (NEW) avec l'ancienne (OLD) pour détecter un changement.
+    IF (NEW.IS_League <> OLD.IS_League) OR (NEW.IS_Championship <> OLD.IS_Championship) THEN
+        RAISE EXCEPTION 'Changement de type de compétition interdit : impossible de convertir League <-> Championship.';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Déclencheur qui exécute la fonction avant chaque mise à jour sur la table Competition.
+CREATE TRIGGER trg_prevent_competition_type_change
+BEFORE UPDATE ON Competition
+FOR EACH ROW
+EXECUTE FUNCTION prevent_competition_type_change();
+
+-- =============================================================================
+-- TRIGGER 1.4 : CONTRÔLE DE COHÉRENCE À L'INSERTION DANS LES TABLES FILLES
+-- =============================================================================
+-- Fonction unique et réutilisable pour valider les insertions dans League et Championship.
+CREATE OR REPLACE FUNCTION trg_check_competition_type_fn()
+RETURNS TRIGGER AS $$
+DECLARE 
+    IS_leag BOOLEAN;
+    IS_Champ BOOLEAN;
+BEGIN
+    -- On récupère le type réel de la compétition depuis la table mère.
+    SELECT IS_League, IS_Championship
+    INTO IS_leag, IS_Champ
+    FROM Competition
+    WHERE ID_Competition=NEW.ID_Competition;
+
+
+    IF TG_TABLE_NAME='league' THEN -- PostgreSQL normalise les noms en minuscules
+        -- Si l'insertion se fait dans League, la variable IS_League doit être TRUE.
+        IF IS_Leag is distinct from True then
+            RAISE EXCEPTION 'Erreur : La compétition % doit être de type League pour apparaître dans League.',
+            NEW.ID_Competition;
+        END IF;
+    ELSEIF TG_TABLE_NAME = 'championship' THEN
+        -- Si l'insertion se fait dans Championship, la variable IS_Championship doit être TRUE.
+        IF IS_Champ is distinct from True then
+            RAISE EXCEPTION 'Erreur : La compétition % doit être de type Championship pour apparaître dans Championship.',
+            NEW.ID_Competition;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Application du trigger sur la table League.
+CREATE TRIGGER TRG_CHECK_LEAGUE
+BEFORE INSERT OR UPDATE ON League
+FOR EACH ROW
+EXECUTE FUNCTION trg_check_competition_type_fn();
+-- Application du MÊME trigger sur la table Championship
+CREATE TRIGGER TRG_CHECK_Championship
+BEFORE INSERT OR UPDATE ON Championship
+FOR EACH ROW
+EXECUTE FUNCTION trg_check_competition_type_fn();
+
+-- =============================================================================
+-- TABLE 1.5 : SEASON
+-- =============================================================================
+Create Table Season (
+    ID_SEASON SERIAL Constraint PK_Season Primary Key,
+    Start_Date Date NOT NULL,
+    End_Date Date NOT NULL,
+    ID_Competition INT,
+    -- Assure la cohérence chronologique des dates d'une saison.
+    Constraint CKECK_Dates CHECK(Start_Date < End_Date),
+    -- Règle métier importante : la clé étrangère pointe vers "League", signifiant que seules les Leagues ont des saisons.
+    Constraint FK_Season_League Foreign Key(ID_Competition) REFERENCES League
+);
+
+
+-- #############################################################################
+-- # SECTION 2 : GESTION DES JOUEURS (PLAYER) ET DE LEURS NATIONALITÉS         #
+-- #############################################################################
+Create table Player(
+    ID_Player SERIAL Constraint PK_Player Primary Key,
+    Name VARCHAR(55) NOT NULL,
+    Date_Of_Birth Date NOT NULL,
+    Height Decimal(9,2) NOT NULL
+);
+
+Create Table Citizenship(
+    ID_Player INT NOT NULL,
+    Citizenship VARCHAR(55) NOT NULL,
+    -- Clé primaire composite pour matérialiser la relation plusieurs-à-plusieurs : un joueur peut avoir plusieurs nationalités.
+    Constraint PK_Citizenship Primary Key(ID_Player,Citizenship),
+    Constraint FK_Citizenship_Player Foreign Key(ID_Player) REFERENCES PLayer
+);
+
+-- #############################################################################
+-- # SECTION 3 : MODÉLISATION DES ÉQUIPES (TEAM) ET DE LEUR SPÉCIALISATION     #
+-- # Une "Team" se spécialise en "Club" ou en "National_Team".                 #
+-- #############################################################################
+Create Table Team(
+    ID_Team SERIAL Constraint PK_Team Primary Key,
+    -- Variables de type booléen pour la spécialisation exclusive.
+    IS_Club BOOLEAN NOT NULL,
+    IS_National_Team BOOLEAN NOT NULL,
+    -- Contrainte XOR garantissant qu'une équipe est SOIT un club, SOIT une équipe nationale.
+    CONSTRAINT chk_Club_or_National_Team CHECK (
+        (IS_Club AND NOT IS_National_Team) OR 
+        (NOT IS_Club AND IS_National_Team))
+);
+
+Create Table National_Team(
+    ID_National_Team INT Constraint PK_National_Team Primary Key,
+    Country VARCHAR(55) NOT NULL,
+    Constraint FK_National_Team_Team Foreign Key(ID_National_Team) REFERENCES Team(ID_Team)
+);
+
+Create Table Club(
+    ID_Club INT Constraint PK_Club Primary Key,
+    Name VARCHAR(55) NOT NULL,
+    City VARCHAR(55) NOT NULL,
+    Constraint FK_Club_Team Foreign Key(ID_Club) REFERENCES Team(ID_Team)
+);
+
+-- Trigger pour interdire le changement de type d'une équipe (Club <-> National_Team).
+CREATE OR REPLACE FUNCTION prevent_Team_type_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (NEW.IS_Club <> OLD.IS_Club) OR (NEW.IS_National_Team <> OLD.IS_National_Team) THEN
+        RAISE EXCEPTION 'Changement de type equipe interdit : impossible de convertir Club <-> National Team';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_prevent_team_type_change
+BEFORE UPDATE ON Team
+FOR EACH ROW
+EXECUTE FUNCTION prevent_Team_type_change();
+
+-- Fonction de trigger réutilisable pour vérifier les insertions dans Club et National_Team.
+CREATE OR REPLACE FUNCTION trg_check_Team_type_fn()
+RETURNS TRIGGER AS $$
+DECLARE 
+    IS_Cl BOOLEAN;
+    IS_Na_Te BOOLEAN;
+BEGIN
+    -- Utilisation d'une structure CASE pour récupérer l'ID de la bonne colonne (ID_Club ou ID_National_Team).
+    -- On veut gérer les différences entre les tables filles.
+    SELECT IS_Club, IS_National_Team
+    INTO IS_Cl, IS_Na_Te
+    FROM Team
+    WHERE ID_Team=CASE
+        WHEN TG_TABLE_NAME = 'club' THEN NEW.ID_Club
+        WHEN TG_TABLE_NAME = 'national_team' THEN NEW.ID_National_Team
+    END;
+    
+    IF TG_TABLE_NAME='club' THEN
+        IF IS_Cl is distinct from True then
+            RAISE EXCEPTION 'Erreur : insertion dans Club avec un ID_Team qui n''est pas un club (ID_Team=%)',
+            NEW.ID_Club;
+        END IF;
+    ELSEIF TG_TABLE_NAME = 'national_team' THEN
+        IF IS_Na_Te is distinct from True then
+            RAISE EXCEPTION 'Erreur : insertion dans National_Team avec un ID_Team qui n''est pas une équipe nationale (ID_Team=%)',
+            NEW.ID_National_Team;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Application de la fonction de trigger aux deux tables spécialisées.
+CREATE TRIGGER TRG_CHECK_CLUB
+	BEFORE INSERT OR UPDATE ON Club
+FOR EACH ROW
+EXECUTE FUNCTION trg_check_Team_type_fn();
+
+CREATE TRIGGER TRG_CHECK_National_Team
+BEFORE INSERT OR UPDATE ON National_Team
+FOR EACH ROW
+EXECUTE FUNCTION trg_check_Team_type_fn();
+
+-- #############################################################################
+-- # SECTION 4 : HISTORIQUE DES CONTRATS DES JOUEURS (HISTORIC_PLAYER)         #
+-- # ------------------------------------------------------------------------- #
+-- # Cette section gère les affectations des joueurs aux équipes et implémente #
+-- # des règles de gestion complexes via des triggers.                         #
+-- #############################################################################
+CREATE TABLE Historic_Player(
+    ID_Team INT NOT NULL,
+    ID_Player INT NOT NULL,
+    Start_Date DATE NOT NULL,
+    -- End_Date est NULLable : une valeur NULL signifie que le contrat est actuellement en cours.
+    End_Date DATE,
+    -- Clé primaire composite, un joueur ne peut avoir qu'un seul contrat avec une équipe donnée.
+    CONSTRAINT PK_Historic_Player PRIMARY KEY(ID_Team, ID_Player, Start_Date), -- Start_Date a été ajoutée pour permettre de resigner
+    CONSTRAINT FK_Historic_Player FOREIGN KEY(ID_Player) REFERENCES Player(ID_Player),
+    CONSTRAINT FK_Historic_Team FOREIGN KEY(ID_Team) REFERENCES Team(ID_Team)
+);
+
+-- =============================================================================
+-- TRIGGER 4.1 : VÉRIFICATION DE LA NATIONALITÉ POUR LES ÉQUIPES NATIONALES
+-- =============================================================================
+CREATE OR REPLACE FUNCTION trg_check_Player_Nationality_fn()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_is_national_team BOOLEAN;
+    v_team_country VARCHAR(55);
+BEGIN
+    -- La jointure interne (INNER JOIN) agit comme un filtre : la requête ne retourne de résultat
+    -- QUE SI l'équipe est une équipe nationale. 
+    SELECT T.IS_National_Team, NT.Country
+    INTO v_is_national_team, v_team_country
+    FROM Team T
+    INNER JOIN National_Team NT ON NT.ID_National_Team = T.ID_Team
+    WHERE T.ID_Team = NEW.ID_Team;
+
+    -- La condition "IF v_is_national_team" ne sera vraie que si la requête précédente a trouvé une équipe nationale.
+    IF v_is_national_team THEN
+        -- On vérifie alors si le joueur possède la citoyenneté requise dans la table Citizenship.
+        IF NOT EXISTS (
+            SELECT 1
+            FROM Citizenship C
+            WHERE C.ID_Player = NEW.ID_Player AND C.Citizenship = v_team_country
+        ) THEN
+            RAISE EXCEPTION 'Le joueur (ID: %) ne peut pas rejoindre l''équipe nationale (ID: %) car il ne possède pas la nationalité requise (%).', NEW.ID_Player, NEW.ID_Team, v_team_country;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_check_Player_Nationality
+BEFORE INSERT OR UPDATE ON Historic_Player
+FOR EACH ROW
+EXECUTE FUNCTION trg_check_Player_Nationality_fn();
+
+-- =============================================================================
+-- TRIGGER 4.2 : CONTRÔLE DES CONTRATS ACTIFS (1 CLUB, 1 ÉQUIPE NATIONALE)
+-- =============================================================================
+CREATE OR REPLACE FUNCTION trg_check_active_teams_fn()
+RETURNS TRIGGER AS $$
+DECLARE
+    is_new_team_club BOOLEAN;
+    active_team_count INT;
+BEGIN
+    -- Optimisation : si on clôture un contrat (en ajoutant une End_Date), pas besoin de vérifier quoi que ce soit.
+    IF NEW.End_Date is NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    
+    -- On identifie le type de l'équipe que le joueur essaie de rejoindre.
+    SELECT T.IS_Club INTO is_new_team_club
+    FROM Team T
+    WHERE T.ID_Team=NEW.ID_Team;
+
+    -- Si c'est un club...
+    IF is_new_team_club THEN
+        -- ...on compte combien d'autres contrats de club sont ACTIFS (End_Date IS NULL) pour ce joueur.
+        SELECT COUNT(*) INTO active_team_count
+        FROM Historic_Player HP
+        INNER JOIN Team T ON T.ID_Team=HP.ID_Team 
+        WHERE HP.ID_Player=NEW.ID_Player AND HP.End_Date IS NULL AND T.IS_Club=True;
+
+        -- Si le joueur a déjà un contrat actif dans un club, on bloque la nouvelle insertion.
+        IF active_team_count > 0 THEN
+            RAISE EXCEPTION 'Le joueur (ID : %) est deja engagé dans un autre club et ne peut pas en rejoindre un autre simultanément.', NEW.ID_Player;
+        END IF;
+    -- Si c'est une équipe nationale...
+    ELSE
+        -- ...on fait la même vérification pour les équipes nationales.
+        SELECT COUNT(*) INTO active_team_count
+        FROM Historic_Player HP
+        INNER JOIN Team T ON T.ID_Team=HP.ID_Team 
+        WHERE HP.ID_Player=NEW.ID_Player AND HP.End_Date IS NULL AND T.IS_National_Team=True;
+
+        IF active_team_count > 0 THEN
+            RAISE EXCEPTION 'Le joueur (ID : %) est deja engagé dans une autre équipe nationale et ne peut pas en rejoindre un autre simultanément.', NEW.ID_Player;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_check_active_teams
+BEFORE INSERT OR UPDATE ON Historic_Player
+FOR EACH ROW
+EXECUTE FUNCTION trg_check_active_teams_fn();
+
+-- #############################################################################
+-- # SECTION 5 : GESTION DES SPONSORS ET DU SPONSORING                         #
+-- #############################################################################
+-- Modèle de spécialisation Personne/Entreprise pour les sponsors.
+Create Table Sponsor(
+    ID_Sponsor SERIAL Constraint PK_Sponsor Primary Key,
+    City VARCHAR(55) NOT NULL,
+    Name VARCHAR(55) NOT NULL,
+    IS_Person BOOLEAN NOT NULL,
+    IS_Company BOOLEAN NOT NULL,
+    CONSTRAINT chk_Person_or_Company CHECK (
+        (IS_Person AND NOT IS_Company) OR 
+        (NOT IS_Person AND IS_Company)
+    )
+);
+
+-- Table d'association pour lier un Sponsor à une Équipe.
+CREATE TABLE Sponsoring (
+    ID_Sponsor INT NOT NULL,
+    ID_Team INT NOT NULL,
+    Start_Date DATE NOT NULL,
+    End_Date DATE, -- NULL signifie que le sponsoring est en cours.
+    -- Le type NUMERIC(19, 2) est idéal pour les montants financiers, il évite les erreurs d'arrondi et peut stocker de très grandes valeurs (jusqu'à des milliers de milliards).
+    Amount NUMERIC(19, 2) NOT NULL,
+    -- Clé primaire composite. L'ajout de Start_Date est crucial : il permet à un sponsor de renouveler son contrat avec la même équipe à différentes périodes.
+    CONSTRAINT PK_Sponsoring PRIMARY KEY(ID_Sponsor, ID_Team, Start_Date),
+    CONSTRAINT FK_Sponsoring_Sponsor FOREIGN KEY(ID_Sponsor) REFERENCES Sponsor(ID_Sponsor),
+    CONSTRAINT FK_Sponsoring_Team FOREIGN KEY(ID_Team) REFERENCES Team(ID_Team),
+    -- S'assure que la date de début est bien avant la date de fin.
+    CONSTRAINT CHK_Dates CHECK (Start_Date < End_Date)
+);
+
+
+-- #############################################################################
+-- # SECTION 6 : GESTION DES MATCHS (GAME) ET DES RÈGLES ASSOCIÉES             #
+-- #############################################################################
+Create Table Game(
+    ID_Game SERIAL Constraint PK_Game Primary Key,
+    ID_Competition INT NOT NULL,
+    Constraint FK_Game_Competition Foreign Key(ID_Competition) REFERENCES Competition
+);
+
+-- Table de liaison qui définit les deux équipes s'affrontant dans un match.
+Create Table Game_Teams(
+    ID_Game INT NOT NULL,
+    ID_Team_1 INT NOT NULL,
+    ID_Team_2 INT NOT NULL,
+    -- Un match est unique, il ne peut donc apparaître qu'une seule fois.
+    Constraint PK_Game_Teams Primary Key(ID_Game),
+    CONSTRAINT FK_Game_Teams_Game FOREIGN KEY (ID_Game) REFERENCES Game(ID_Game),
+    CONSTRAINT FK_Game_Teams_1 FOREIGN KEY (ID_Team_1) REFERENCES Team(ID_Team),
+    CONSTRAINT FK_Game_Teams_2 FOREIGN KEY (ID_Team_2) REFERENCES Team(ID_Team),
+    -- Une équipe ne peut logiquement pas jouer contre elle-même.
+    CONSTRAINT CHK_Teams_Not_Same CHECK (ID_Team_1 <> ID_Team_2)
+);
+
+-- ============================================================================
+-- TRIGGER 6.1 : APPLICATION DES RÈGLES DE CONFRONTATION DES ÉQUIPES
+-- =============================================================================
+-- Ce trigger est le gardien des règles métier pour les matchs.
+CREATE OR REPLACE FUNCTION trg_check_game_rules_fn()
+RETURNS TRIGGER AS $$
+DECLARE
+    IS_Competition_League BOOLEAN;
+    IS_Team_1_Club BOOLEAN;
+    IS_Team_2_Club BOOLEAN;
+BEGIN
+    -- Étape 1 : Déterminer le type de compétition du match.
+    SELECT C.IS_League INTO IS_Competition_League
+    FROM Game G
+    INNER JOIN Competition C ON G.ID_Competition=C.ID_Competition 
+    WHERE G.ID_Game=NEW.ID_Game;
+
+    -- Étape 2 : Déterminer le type de chaque équipe.
+    SELECT IS_Club INTO IS_Team_1_Club FROM Team WHERE ID_Team=NEW.ID_Team_1;
+    SELECT IS_Club INTO IS_Team_2_Club FROM Team WHERE ID_Team=NEW.ID_Team_2;
+
+    -- Étape 3 : Appliquer la logique de validation.
+    -- Si c'est une League...
+    IF IS_Competition_League THEN
+        -- ... alors les deux équipes DOIVENT être des clubs.
+        IF NOT IS_Team_1_Club OR NOT IS_Team_2_Club THEN
+            RAISE EXCEPTION 'Conflit Compétition/Équipe : Une compétition de type "League" ne peut opposer que des clubs.';
+        END IF;
+    -- Sinon (c'est un Championship)...
+    ELSE
+        -- ... alors les deux équipes DOIVENT être des équipes nationales (donc PAS des clubs).
+        IF IS_Team_1_Club OR IS_Team_2_Club THEN
+            RAISE EXCEPTION 'Conflit Compétition/Équipe : Une compétition de type "Championship" ne peut opposer que des National Teams.';
+        END IF;
+    END IF;
+    
+    -- Cette logique couvre parfaitement la règle "les deux équipes doivent être du même type".
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_check_game_rules
+BEFORE INSERT OR UPDATE ON Game_Teams
+FOR EACH ROW EXECUTE FUNCTION trg_check_game_rules_fn();
+
+-- #############################################################################
+-- # SECTION 7 : GESTION DES PERFORMANCES DES JOUEURS PAR MATCH                #
+-- #############################################################################
+-- Table unique pour stocker toutes les statistiques d'un joueur pour un match donné.
+
+CREATE TABLE Player_Game_Stats (
+    ID_Game INT NOT NULL,
+    ID_Player INT NOT NULL,
+
+    -- On stocke les tirs réussis ("made") ET tentés ("attempted") pour chaque type de tir.
+    -- C'est indispensable pour calculer les pourcentages de réussite, comme demandé.
+    three_points_made INT NOT NULL DEFAULT 0,
+    three_points_attempted INT NOT NULL DEFAULT 0,
+    
+    two_points_made INT NOT NULL DEFAULT 0,
+    two_points_attempted INT NOT NULL DEFAULT 0,
+
+    free_throws_made INT NOT NULL DEFAULT 0,
+    free_throws_attempted INT NOT NULL DEFAULT 0,
+
+    -- Autres statistiques clés.
+    assists INT NOT NULL DEFAULT 0,
+    rebounds INT NOT NULL DEFAULT 0,
+    blocks INT NOT NULL DEFAULT 0,
+    fouls INT NOT NULL DEFAULT 0,
+
+    -- Clé primaire composite : un joueur n'a qu'une seule ligne de statistiques par match.
+    CONSTRAINT PK_Player_Game_Stats PRIMARY KEY (ID_Game, ID_Player),
+    CONSTRAINT FK_Stats_Game FOREIGN KEY (ID_Game) REFERENCES Game(ID_Game),
+    CONSTRAINT FK_Stats_Player FOREIGN KEY (ID_Player) REFERENCES Player(ID_Player),
+
+    -- Contraintes d'intégrité pour garantir que le nombre de tirs réussis ne peut pas dépasser le nombre de tirs tentés.
+    CONSTRAINT CHK_3pts CHECK (three_points_made <= three_points_attempted),
+    CONSTRAINT CHK_2pts CHECK (two_points_made <= two_points_attempted),
+    CONSTRAINT CHK_ft CHECK (free_throws_made <= free_throws_attempted)
+);
+
+-- #############################################################################
+-- # SECTION 8 : CRÉATION DES INDEX POUR L'OPTIMISATION DES PERFORMANCES       
+-- INDEX SUR LES CLÉS ÉTRANGÈRES (POUR ACCÉLÉRER MASSIVEMENT LES JOINTURES)
+-- =============================================================================
+
+-- Pour trouver rapidement les saisons d'une compétition.
+CREATE INDEX idx_season_id_competition ON Season (ID_Competition);
+
+-- Pour trouver rapidement la citoyenneté par pays (ex: tous les joueurs français).
+CREATE INDEX idx_citizenship_citizenship ON Citizenship (Citizenship);
+
+-- Pour trouver rapidement l'historique d'un joueur 
+CREATE INDEX idx_historic_player_id_player ON Historic_Player (ID_Player);
+
+-- Pour trouver rapidement tous les sponsors d'une équipe.
+CREATE INDEX idx_sponsoring_id_team ON Sponsoring (ID_Team);
+
+-- Pour trouver rapidement tous les matchs d'une compétition.
+CREATE INDEX idx_game_id_competition ON Game (ID_Competition);
+
+-- Pour trouver rapidement tous les matchs auxquels une équipe a participé.
+-- Il faut un index sur chaque colonne d'équipe.
+CREATE INDEX idx_game_teams_id_team_1 ON Game_Teams (ID_Team_1);
+CREATE INDEX idx_game_teams_id_team_2 ON Game_Teams (ID_Team_2);
+
+-- Pour trouver rapidement toutes les statistiques d'un joueur sur l'ensemble de ses matchs.
+-- C'est probablement l'index le plus important de toute la base pour l'analyse de performance.
+CREATE INDEX idx_player_game_stats_id_player ON Player_Game_Stats (ID_Player);
+
+
+-- =============================================================================
+-- INDEX SUR LES COLONNES DE RECHERCHE FRÉQUENTES (POUR ACCÉLÉRER LES CLAUSES WHERE)
+-- =============================================================================
+
+-- Pour rechercher un joueur par son nom.
+CREATE INDEX idx_player_name ON Player (Name);
+
+-- Pour rechercher un club par son nom.
+CREATE INDEX idx_club_name ON Club (Name);
+
+-- Pour rechercher un sponsor par son nom.
+CREATE INDEX idx_sponsor_name ON Sponsor (Name);
+
+
+-- =============================================================================
+-- INDEX PARTIEL (TECHNIQUE AVANCÉE POUR UNE OPTIMISATION SPÉCIFIQUE)
+-- =============================================================================
+
+-- Cet index ne référence QUE les lignes où un contrat est ACTIF (End_Date IS NULL).
+-- Il est extrêmement rapide et petit, idéal pour la requête fréquente : "Trouver le club actuel d'un joueur".
+CREATE INDEX idx_historic_player_active_contract ON Historic_Player (ID_Player) WHERE End_Date IS NULL;
