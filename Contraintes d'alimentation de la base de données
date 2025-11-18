@@ -1,0 +1,14 @@
+1. Crée d'abord toutes les entités de base. Ce sont les tables "mères" qui n'ont pas besoin d'autres informations pour exister. Remplis-les en premier avec tous tes joueurs, équipes, compétitions et sponsors.
+2. Spécialise chaque entité créée à l'étape 1.
+2.1 Pour chaque Player, ajoute sa nationalité dans Citizenship.
+2.2 Pour chaque Team, insère son ID soit dans Club, soit dans National_Team (jamais les deux !).
+2.3 Pour chaque Competition, insère son ID soit dans League, soit dans Championship.
+3. Crée les relations et les contrats. 
+3.1 Lie les joueurs aux équipes en créant leurs contrats dans Historic_Player. Fais attention aux dates (Start_Date, End_Date). 
+3.2. Lie les sponsors aux équipes dans Sponsoring.
+3.3 Attention : Tu ne peux ajouter une saison dans Season que pour une compétition qui existe dans la table League.
+4. Crée les matchs et enregistre les performances.
+4.1 Pense à cet ordre strict pour chaque match :
+4.1.1. Crée le match dans la table Game en le liant à une compétition et en lui donnant une date (Game_Date).
+4.1.2 Définis les deux équipes qui s'affrontent dans Game_Teams. 
+4.1.3. Enfin, ajoute les statistiques des joueurs pour ce match dans Player_Game_Stats. (NB : Le système vérifiera automatiquement que chaque joueur avait bien un contrat actif à la date du match !!!!!)
