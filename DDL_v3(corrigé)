@@ -615,3 +615,43 @@ CREATE TRIGGER trg_check_player_in_game
 BEFORE INSERT OR UPDATE ON Player_Game_Stats
 FOR EACH ROW
 EXECUTE FUNCTION trg_check_player_in_game_fn();
+
+-- Ajouter une colonne Stage à la table Game pour spécifier la phase de la compétition.
+ALTER TABLE GAME
+ADD COLUMN Stage VARCHAR(55);
+--Ajouter une contrainte pour garantir la qualité des données.
+ALTER TABLE GAME
+ADD Constraint CHK_Game_Stage CHECK((Stage IN ('Regular Season', 'Play-in', 'Quarter-final', 'Semi-final', 'Final', 'Group Stage')));
+
+-- #############################################################################
+-- # SECTION 9 : GESTION DES PALMARÈS (WINNERS)                                #
+-- # --------------------------------------------------------------------------#
+-- # Cette table a été crée afin de répondre aux requêtes analytiques sur les   #
+-- # vainqueurs des compétitions.                                              #
+-- #############################################################################
+
+CREATE Table Competition_Winner (
+ID_Competition_Winner SERIAL Constraint PK_Competition_Winner Primary Key,
+-- Clé étrangère vers la compétition concernée (ex: 'FIBA World Cup').
+ID_Competition INT NOT NULL,
+Constraint FK_Competition_Winner Foreign Key(ID_Competition) REFERENCES Competition,
+-- Clé étrangère vers la saison. NULL pour les championnats qui n'ont pas de saison.
+ID_Season INT,
+CONSTRAINT FK_Winner_Season FOREIGN KEY (ID_Season) REFERENCES Season(ID_SEASON),
+-- L'année du titre. Indispensable pour les championnats (ex: EuroBasket 2025).
+Year INT NOT NULL,
+-- La clé étrangère vers l'équipe gagnante.
+ID_Team_Winner INT NOT NULL,
+CONSTRAINT FK_Winner_Team FOREIGN KEY (ID_Team_Winner) REFERENCES Team(ID_Team),
+-- Contrainte d'intégrité : On ne peut pas avoir le même vainqueur pour la même compétition la même année.
+CONSTRAINT UK_Winner UNIQUE(ID_Competition, Year)
+);
+
+
+
+
+
+
+
+
+
