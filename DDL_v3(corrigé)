@@ -647,6 +647,96 @@ CONSTRAINT FK_Winner_Team FOREIGN KEY (ID_Team_Winner) REFERENCES Team(ID_Team),
 CONSTRAINT UK_Winner UNIQUE(ID_Competition, Year)
 );
 
+-- =============================================================================
+-- TRIGGER 9.1 (Version 2.0) : CONTRÔLE DE COHÉRENCE COMPLET POUR LE VAINQUEUR
+-- =============================================================================
+-- Ce déclencheur vérifie la cohérence des types, mais
+-- aussi que l'équipe déclarée vainqueur a bien participé à la compétition.
+
+CREATE OR REPLACE FUNCTION trg_check_winner_consistency_fn()
+RETURNS TRIGGER AS $$
+DECLARE
+    is_competition_league BOOLEAN;
+    is_winner_a_club BOOLEAN;
+    v_season_competition_id INT;
+    v_season_start_date DATE;
+    v_season_end_date DATE;
+    participation_count INT := 0;
+BEGIN
+    -- Étape 1 : Récupérer les informations sur la compétition et l'équipe gagnante.
+    SELECT C.IS_League INTO is_competition_league
+    FROM Competition C WHERE C.ID_Competition = NEW.ID_Competition;
+
+    SELECT T.IS_Club INTO is_winner_a_club
+    FROM Team T WHERE T.ID_Team = NEW.ID_Team_Winner;
+
+    -- Étape 2 : Vérifier la cohérence des types (League/Club, Championship/National_Team).
+    IF is_competition_league THEN
+        IF NEW.ID_Season IS NULL THEN
+            RAISE EXCEPTION 'Incohérence : La compétition % est une League. Un ID_Season doit être fourni.', NEW.ID_Competition;
+        END IF;
+        IF NOT is_winner_a_club THEN
+            RAISE EXCEPTION 'Conflit de type : La compétition % est une League, le vainqueur (Équipe ID %) doit être un Club.', NEW.ID_Competition, NEW.ID_Team_Winner;
+        END IF;
+    ELSE -- C'est un Championship
+        IF NEW.ID_Season IS NOT NULL THEN
+            RAISE EXCEPTION 'Incohérence : La compétition % est un Championship. L''ID_Season doit être NULL.', NEW.ID_Competition;
+        END IF;
+        IF is_winner_a_club THEN
+            RAISE EXCEPTION 'Conflit de type : La compétition % est un Championship, le vainqueur (Équipe ID %) doit être une National_Team.', NEW.ID_Competition, NEW.ID_Team_Winner;
+        END IF;
+    END IF;
+
+    -- Étape 3 : Vérifier la cohérence entre la Saison et la Compétition (si applicable).
+    IF NEW.ID_Season IS NOT NULL THEN
+        SELECT ID_Competition, Start_Date, End_Date
+        INTO v_season_competition_id, v_season_start_date, v_season_end_date
+        FROM Season WHERE ID_SEASON = NEW.ID_Season;
+
+        IF v_season_competition_id <> NEW.ID_Competition THEN
+            RAISE EXCEPTION 'Conflit de données : La Saison ID % n''appartient pas à la Compétition ID %.', NEW.ID_Season, NEW.ID_Competition;
+        END IF;
+    END IF;
+
+    -- Étape 4 : VÉRIFICATION DE LA PARTICIPATION HISTORIQUE DE L'ÉQUIPE.
+    -- C'est la nouvelle logique qui ferme la faille.
+    IF is_competition_league THEN
+        -- Pour une League, on cherche un match de l'équipe durant les dates de la saison.
+        SELECT COUNT(*)
+        INTO participation_count
+        FROM Game g
+        JOIN Game_Teams gt ON g.ID_Game = gt.ID_Game
+        WHERE g.ID_Competition = NEW.ID_Competition
+          AND (gt.ID_Team_1 = NEW.ID_Team_Winner OR gt.ID_Team_2 = NEW.ID_Team_Winner)
+          AND g.Game_Date BETWEEN v_season_start_date AND v_season_end_date;
+    ELSE
+        -- Pour un Championship, on cherche un match de l'équipe durant l'année du titre.
+        SELECT COUNT(*)
+        INTO participation_count
+        FROM Game g
+        JOIN Game_Teams gt ON g.ID_Game = gt.ID_Game
+        WHERE g.ID_Competition = NEW.ID_Competition
+          AND (gt.ID_Team_1 = NEW.ID_Team_Winner OR gt.ID_Team_2 = NEW.ID_Team_Winner)
+          AND EXTRACT(YEAR FROM g.Game_Date) = NEW.Year;
+    END IF;
+
+    -- Si aucun match n'est trouvé, l'insertion est refusée.
+    IF participation_count = 0 THEN
+        RAISE EXCEPTION 'Validation échouée : L''équipe ID % n''a pas participé à la compétition ID % durant la période requise (Saison ID % / Année %).',
+        NEW.ID_Team_Winner, NEW.ID_Competition, NEW.ID_Season, NEW.Year;
+    END IF;
+
+    -- Si toutes les vérifications sont passées, l'opération est autorisée.
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Pas besoin de recréer le trigger si vous avez juste fait un CREATE OR REPLACE FUNCTION.
+-- Sinon, ré-exécutez cette ligne :
+CREATE TRIGGER trg_check_winner_consistency
+BEFORE INSERT OR UPDATE ON Competition_Winner
+FOR EACH ROW
+EXECUTE FUNCTION trg_check_winner_consistency_fn();
 
 
 
