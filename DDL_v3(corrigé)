@@ -730,9 +730,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
--- Pas besoin de recréer le trigger si vous avez juste fait un CREATE OR REPLACE FUNCTION.
--- Sinon, ré-exécutez cette ligne :
+-- Trigger crée sur la table Competition_Winner
 CREATE TRIGGER trg_check_winner_consistency
 BEFORE INSERT OR UPDATE ON Competition_Winner
 FOR EACH ROW
