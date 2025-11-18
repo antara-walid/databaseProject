@@ -1,0 +1,115 @@
+DO $$
+DECLARE
+    -- Déclaration des variables qui vont stocker les IDs générés
+    v_liga_id INT;
+    v_euro_id INT;
+    v_real_id INT;
+    v_barca_id INT;
+    v_france_id INT;
+    v_allemagne_id INT;
+    v_joueur_fr_id INT;
+    v_joueur_de_id INT;
+    v_game_id INT;
+BEGIN
+
+    RAISE NOTICE '--- BLOC 0 : DONNÉES INITIALES VALIDES ---';
+    -- L'objectif est de créer un petit écosystème de données cohérentes.
+
+    -- Création d'une compétition de type "League" (La Liga)
+    -- On récupère l'ID de la compétition créée grâce à RETURNING...
+    INSERT INTO Competition(Name, IS_League, IS_Championship) VALUES ('La Liga', TRUE, FALSE) RETURNING ID_Competition INTO v_liga_id;
+    -- ...et on le réutilise immédiatement pour la spécialisation dans la table League.
+    INSERT INTO League(ID_Competition) VALUES (v_liga_id);
+    RAISE NOTICE 'Compétition "La Liga" créée avec l''ID %', v_liga_id;
+
+    -- Création d'une compétition de type "Championship" (Euro 2024)
+    INSERT INTO Competition(Name, IS_League, IS_Championship) VALUES ('Euro 2024', FALSE, TRUE) RETURNING ID_Competition INTO v_euro_id;
+    INSERT INTO Championship(ID_Competition) VALUES (v_euro_id);
+    RAISE NOTICE 'Compétition "Euro 2024" créée avec l''ID %', v_euro_id;
+
+    -- Création d'équipes et de joueurs en suivant le même principe
+    INSERT INTO Team(IS_Club, IS_National_Team) VALUES (TRUE, FALSE) RETURNING ID_Team INTO v_real_id;
+    INSERT INTO Club(ID_Club, Name, City) VALUES (v_real_id, 'Real Madrid', 'Madrid');
+
+    INSERT INTO Team(IS_Club, IS_National_Team) VALUES (TRUE, FALSE) RETURNING ID_Team INTO v_barca_id;
+    INSERT INTO Club(ID_Club, Name, City) VALUES (v_barca_id, 'FC Barcelona', 'Barcelone');
+
+    INSERT INTO Team(IS_Club, IS_National_Team) VALUES (FALSE, TRUE) RETURNING ID_Team INTO v_france_id;
+    INSERT INTO National_Team(ID_National_Team, Country) VALUES (v_france_id, 'France');
+
+    INSERT INTO Team(IS_Club, IS_National_Team) VALUES (FALSE, TRUE) RETURNING ID_Team INTO v_allemagne_id;
+    INSERT INTO National_Team(ID_National_Team, Country) VALUES (v_allemagne_id, 'Allemagne');
+
+    INSERT INTO Player(Name, Date_Of_Birth, Height) VALUES ('Joueur Français', '2000-01-01', 1.85) RETURNING ID_Player INTO v_joueur_fr_id;
+    INSERT INTO Citizenship(ID_Player, Citizenship) VALUES (v_joueur_fr_id, 'France');
+
+    INSERT INTO Player(Name, Date_Of_Birth, Height) VALUES ('Joueur Allemand', '1999-05-20', 1.90) RETURNING ID_Player INTO v_joueur_de_id;
+    INSERT INTO Citizenship(ID_Player, Citizenship) VALUES (v_joueur_de_id, 'Allemagne');
+    
+    RAISE NOTICE '--- Données initiales créées avec succès ---';
+    
+    
+    RAISE NOTICE '--- BLOC 1 : VÉRIFICATION DE LA NATIONALITÉ ---';
+    
+    -- TEST 1.1 : TENTATIVE INVALIDE
+    -- On essaie de faire signer le joueur français (ID stocké dans v_joueur_fr_id) 
+    -- dans l'équipe nationale d'Allemagne (ID stocké dans v_allemagne_id).
+    -- RÉSULTAT ATTENDU : ÉCHEC.
+    BEGIN
+        INSERT INTO Historic_Player(ID_Team, ID_Player, Start_Date) VALUES (v_allemagne_id, v_joueur_fr_id, '2024-01-01');
+        RAISE EXCEPTION 'ERREUR TEST 1.1: Le trigger de nationalité aurait dû bloquer l''insertion.';
+    EXCEPTION WHEN raise_exception THEN
+        RAISE NOTICE 'SUCCÈS TEST 1.1: Le trigger a correctement rejeté l''insertion du joueur dans la mauvaise équipe nationale.';
+    END;
+
+    -- TEST 1.2 : INSERTION VALIDE
+    -- On fait signer le joueur français (v_joueur_fr_id) dans l'équipe nationale de France (v_france_id).
+    -- RÉSULTAT ATTENDU : SUCCÈS.
+    INSERT INTO Historic_Player(ID_Team, ID_Player, Start_Date) VALUES (v_france_id, v_joueur_fr_id, '2024-01-01');
+    RAISE NOTICE 'SUCCÈS TEST 1.2: Le joueur a été correctement inséré dans la bonne équipe nationale.';
+
+
+    RAISE NOTICE '--- BLOC 2 : VÉRIFICATION DE LA COHÉRENCE D''INSERTION ---';
+    
+    -- TEST 2.1 : Insertion invalide dans la table League
+    -- On essaie d'ajouter l'ID de "Euro 2024" (v_euro_id), qui est un Championship, dans la table League.
+    -- RÉSULTAT ATTENDU : ÉCHEC.
+    BEGIN
+        INSERT INTO League(ID_Competition) VALUES (v_euro_id);
+        RAISE EXCEPTION 'ERREUR TEST 2.1: Le trigger de type de compétition aurait dû bloquer l''insertion.';
+    EXCEPTION WHEN raise_exception THEN
+        RAISE NOTICE 'SUCCÈS TEST 2.1: Le trigger a correctement empêché un Championship d''être inséré dans League.';
+    END;
+
+    -- TEST 2.2 : Vérification du contrat de club actif unique
+    -- Étape A : On donne un premier contrat valide au joueur allemand (v_joueur_de_id) avec le Real Madrid (v_real_id).
+    INSERT INTO Historic_Player(ID_Team, ID_Player, Start_Date, End_Date) VALUES (v_real_id, v_joueur_de_id, '2023-07-01', NULL);
+    -- Étape B (TENTATIVE INVALIDE) : On essaie de lui donner un deuxième contrat actif avec le FC Barcelona (v_barca_id).
+    -- RÉSULTAT ATTENDU : ÉCHEC.
+    BEGIN
+        INSERT INTO Historic_Player(ID_Team, ID_Player, Start_Date, End_Date) VALUES (v_barca_id, v_joueur_de_id, '2024-01-01', NULL);
+        RAISE EXCEPTION 'ERREUR TEST 2.2: Le trigger de contrat actif unique aurait dû bloquer l''insertion.';
+    EXCEPTION WHEN raise_exception THEN
+        RAISE NOTICE 'SUCCÈS TEST 2.2: Le trigger a correctement empêché un joueur d''avoir deux contrats de club actifs.';
+    END;
+    
+    -- TEST 2.3 : Cohérence du type d'équipes dans un match
+    -- Étape A : On crée un match dans "La Liga" (v_liga_id) et on récupère son ID.
+    INSERT INTO Game(ID_Competition, Game_Date) VALUES (v_liga_id, '2025-03-20') RETURNING ID_Game INTO v_game_id;
+    -- Étape B (TENTATIVE INVALIDE) : On essaie de faire s'affronter un club (v_real_id) et une équipe nationale (v_france_id).
+    -- RÉSULTAT ATTENDU : ÉCHEC.
+    BEGIN
+        INSERT INTO Game_Teams(ID_Game, ID_Team_1, ID_Team_2) VALUES (v_game_id, v_real_id, v_france_id);
+        RAISE EXCEPTION 'ERREUR TEST 2.3: Le trigger de règles de match aurait dû bloquer l''insertion.';
+    EXCEPTION WHEN raise_exception THEN
+        RAISE NOTICE 'SUCCÈS TEST 2.3: Le trigger a correctement empêché un match mixte dans une League.';
+    END;
+
+    -- Étape C (INSERTION VALIDE) : On organise un match valide entre deux clubs.
+    -- RÉSULTAT ATTENDU : SUCCÈS.
+    INSERT INTO Game_Teams(ID_Game, ID_Team_1, ID_Team_2) VALUES (v_game_id, v_real_id, v_barca_id);
+    RAISE NOTICE 'SUCCÈS TEST 2.3: Un match valide entre deux clubs a été correctement inséré.';
+    
+    RAISE NOTICE '--- TOUS LES TESTS SIMPLES ONT ÉTÉ EXÉCUTÉS AVEC SUCCÈS ---';
+
+END $$;
