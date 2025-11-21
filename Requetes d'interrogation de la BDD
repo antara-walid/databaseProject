@@ -38,10 +38,140 @@ ORDER BY Taille_Moyenne DESC
 Limit 1;
 
 -- Requete 4
+SELECT S.ID_Sponsor, S.Name,
+COUNT(DISTINCT cw.ID_Team_Winner) AS "Nombre d'Équipes Championnes Sponsorisées"
+
+FROM Sponsor S
+INNER JOIN Sponsoring SG ON S.ID_Sponsor = SG.ID_Sponsor
+INNER JOIN Competition_Winner CW ON SG.ID_Team=CW.ID_Team_Winner
+INNER JOIN Competition C ON C.ID_Competition = CW.ID_Competition
+WHERE 
+C.Name = 'FIBA World Cup' 
+GROUP BY S.ID_Sponsor, S.Name
+ORDER BY "Nombre d'Équipes Championnes Sponsorisées" DESC
+Limit 1;
+
+-- Requete 5
+-- Étape 1 : On utilise une CTE pour identifier clairement quelle est la "saison actuelle".
+-- On prend simplement la saison qui a commencé le plus récemment.
+WITH CurrentSeason AS (
+    SELECT
+        ID_SEASON,
+        Start_Date,
+        End_Date
+    FROM
+        Season
+    ORDER BY
+        Start_Date DESC
+    LIMIT 1
+),
+
+-- Étape 2 : On calcule les statistiques cumulées pour chaque joueur dans chaque club,
+-- mais uniquement pour les matchs qui ont eu lieu pendant la saison actuelle.
+PlayerSeasonStats AS (
+    SELECT
+        p.Name AS Player_Name,
+        c.Name AS Club_Name,
+        c.ID_Club,
+        -- On calcule le pourcentage de réussite en toute sécurité
+        CASE
+            WHEN SUM(pgs.three_points_attempted) > 0 THEN
+                (SUM(pgs.three_points_made)::DECIMAL / SUM(pgs.three_points_attempted)) * 100
+            ELSE
+                0
+        END AS Percentage_3Pts
+    FROM
+        Player_Game_Stats pgs
+    JOIN
+        Game g ON pgs.ID_Game = g.ID_Game
+    JOIN
+        Player p ON pgs.ID_Player = p.ID_Player
+    JOIN
+        -- On trouve le contrat actif du joueur pour savoir dans quel club il joue
+        Historic_Player hp ON p.ID_Player = hp.ID_Player
+    JOIN
+        Club c ON hp.ID_Team = c.ID_Club
+    WHERE
+        -- On ne garde que les matchs de la saison actuelle
+        g.Game_Date BETWEEN (SELECT Start_Date FROM CurrentSeason) AND (SELECT End_Date FROM CurrentSeason)
+        -- Et on s'assure que le contrat du joueur est bien avec CE club
+        AND hp.ID_Team = c.ID_Club
+        -- Et que ce contrat est bien celui qui est actif actuellement
+        AND hp.End_Date IS NULL
+    GROUP BY
+        p.ID_Player, c.ID_Club
+    HAVING
+        -- on exclut les joueurs avec peu de tirs pour un résultat pertinent
+        SUM(pgs.three_points_attempted) >= 20
+),
+
+-- Étape 3 : On utilise une fonction de fenêtrage pour classer les joueurs au sein de leur club
+RankedPlayers AS (
+    SELECT
+        Club_Name,
+        Player_Name,
+        Percentage_3Pts,
+        -- La fonction RANK() attribue un rang à chaque joueur.
+        -- PARTITION BY ID_Club : dit à la fonction de recommencer le classement pour chaque club.
+        -- ORDER BY Percentage_3Pts DESC : classe les joueurs du meilleur au moins bon pourcentage.
+        RANK() OVER(PARTITION BY ID_Club ORDER BY Percentage_3Pts DESC) as Player_Rank
+    FROM
+        PlayerSeasonStats
+)
+
+-- Étape 4 : On sélectionne finalement tous les joueurs qui ont obtenu le rang n°1.
+SELECT
+    Club_Name,
+    Player_Name,
+    -- On formate le résultat pour une meilleure présentation
+    TO_CHAR(Percentage_3Pts, '99.99%') AS "Pourcentage à 3 Points"
+FROM
+    RankedPlayers
+WHERE
+    Player_Rank = 1
+ORDER BY
+    Club_Name;
+
+-- Requete 6
+SELECT
+    C.Name AS "Nom du Club",
+    P.Name AS "Nom du Joueur",
+    ROUND(AVG(PS.assists), 2) AS "Moyenne de Passes par Match"
+FROM
+    Player P
+JOIN
+    Player_Game_Stats PS ON P.ID_Player = PS.ID_Player
+JOIN
+    Historic_Player HP ON P.ID_Player = HP.ID_Player
+JOIN
+    Club C ON HP.ID_Team = C.ID_Club
+WHERE
+    C.ID_Club = 2  -- <-- CHANGEZ L'ID DU CLUB ICI
+GROUP BY
+    C.Name, P.Name
+ORDER BY
+    "Moyenne de Passes par Match" DESC
+LIMIT 1;
+
+-- Requete 7
+SELECT
+    C.Name AS "Nom du Club",
+    COUNT(CW.ID_Competition_Winner) AS "Nombre de Titres EuroLeague"
+FROM
+    Club C
+JOIN
+    Competition_Winner CW ON C.ID_Club = CW.ID_Team_Winner
+JOIN
+    Competition Co ON Co.ID_Competition = CW.ID_Competition
+WHERE
+    Co.Name = 'EuroLeague'
+GROUP BY
+    C.ID_Club, C.Name
+HAVING
+    COUNT(CW.ID_Competition_Winner) > 3
+ORDER BY
+    "Nombre de Titres EuroLeague" DESC;
 
 
-
-
-
-
+-- Fin 
 
