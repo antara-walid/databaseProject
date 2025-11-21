@@ -1,0 +1,47 @@
+-- Requete 1
+SELECT P.ID_Player, P.name,
+SUM (3*three_points_made+2*two_points_made+free_throws_made) as Total_Points
+FROM Player P
+INNER JOIN Player_game_stats PS
+ON P.ID_Player = PS.ID_Player
+INNER JOIN Game G 
+ON G.ID_Game=PS.ID_Game
+INNER JOIN Competition C
+ON C.ID_Competition=G.ID_Competition
+WHERE C.IS_Championship=True
+GROUP BY P.ID_Player
+ORDER BY Total_Points DESC
+lIMIT 10;
+
+-- Requete 2
+SELECT P.Name AS "Nom du Joueur",
+PS.free_throws_made AS "Laners Réussis",
+PS.free_throws_attempted AS "Laners Tentés",
+(PS.free_throws_made::numeric / PS.free_throws_attempted) * 100 AS "Pourcentage de Réussite"
+FROM Player P
+INNER JOIN Player_Game_stats PS ON P.ID_Player = PS.ID_Player
+INNER JOIN Game G ON G.ID_Game=PS.ID_Game
+INNER JOIN Competition C ON C.ID_Competition=G.ID_Competition
+WHERE
+C.Name='EuroBasket' AND G.Stage='Final' AND EXTRACT(YEAR FROM g.Game_Date) = 2002
+AND PS.free_throws_attempted >5
+ORDER BY "Pourcentage de Réussite" DESC;
+
+-- Requete 3
+SELECT C.ID_Club, C.Name, AVG(P.Height) AS Taille_Moyenne
+FROM Club C
+INNER JOIN Historic_Player HP ON HP.ID_Team=C.ID_Club
+INNER JOIN Player P ON HP.ID_Player=P.ID_Player
+WHERE HP.End_Date IS NULL
+GROUP BY C.ID_Club,C.Name
+ORDER BY Taille_Moyenne DESC
+Limit 1;
+
+-- Requete 4
+
+
+
+
+
+
+
