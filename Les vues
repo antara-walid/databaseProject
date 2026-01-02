@@ -1,0 +1,72 @@
+-- #############################################################################
+-- #  CRÉATION DES VUES (VIEWS)                                    
+-- # ------------------------------------------------------------------------- #
+-- # Les vues permettent de simplifier les requêtes complexes et d'exposer     #
+-- # des données pré-agrégées ou jointes de manière lisible.                   #
+-- #############################################################################
+
+-- =============================================================================
+-- VUE 1 : VUE GLOBALE DES JOUEURS ACTIFS ET LEURS ÉQUIPES
+-- Combine Player, Historic_Player et Team pour voir qui joue où actuellement.
+-- =============================================================================
+CREATE VIEW v_Active_Contracts AS
+SELECT 
+    p.ID_Player,
+    p.Name AS Player_Name,
+    t.ID_Team,
+    CASE 
+        WHEN t.IS_Club THEN (SELECT c.Name FROM Club c WHERE c.ID_Club = t.ID_Team)
+        WHEN t.IS_National_Team THEN (SELECT nt.Country FROM National_Team nt WHERE nt.ID_National_Team = t.ID_Team)
+    END AS Team_Name,
+    CASE 
+        WHEN t.IS_Club THEN 'Club'
+        ELSE 'National Team'
+    END AS Team_Type,
+    hp.Start_Date
+FROM Player p
+JOIN Historic_Player hp ON p.ID_Player = hp.ID_Player
+JOIN Team t ON hp.ID_Team = t.ID_Team
+WHERE hp.End_Date IS NULL;
+
+-- =============================================================================
+-- VUE 2 : RÉSUMÉ DES PERFORMANCES CARRIÈRE PAR JOUEUR
+-- Agrège toutes les statistiques de Player_Game_Stats pour chaque joueur.
+-- =============================================================================
+CREATE VIEW v_Player_Career_Stats AS
+SELECT 
+    p.ID_Player,
+    p.Name,
+    COUNT(s.ID_Game) AS Games_Played,
+    SUM(s.three_points_made * 3 + s.two_points_made * 2 + s.free_throws_made) AS Total_Points,
+    ROUND(AVG(s.assists), 2) AS Avg_Assists,
+    ROUND(AVG(s.rebounds), 2) AS Avg_Rebounds,
+    SUM(s.fouls) AS Total_Fouls
+FROM Player p
+LEFT JOIN Player_Game_Stats s ON p.ID_Player = s.ID_Player
+GROUP BY p.ID_Player, p.Name;
+
+-- =============================================================================
+-- VUE 3 : DÉTAILS DES MATCHS AVEC NOMS DES ÉQUIPES
+-- Transforme les IDs des équipes en noms lisibles pour les rapports.
+-- =============================================================================
+CREATE VIEW v_Matches_Details AS
+SELECT 
+    g.ID_Game,
+    g.Game_Date,
+    comp.Name AS Competition_Name,
+    g.Stage,
+    -- Équipe 1
+    (SELECT COALESCE(c1.Name, nt1.Country) 
+     FROM Team t1 
+     LEFT JOIN Club c1 ON t1.ID_Team = c1.ID_Club 
+     LEFT JOIN National_Team nt1 ON t1.ID_Team = nt1.ID_National_Team 
+     WHERE t1.ID_Team = gt.ID_Team_1) AS Team_Home,
+    -- Équipe 2
+    (SELECT COALESCE(c2.Name, nt2.Country) 
+     FROM Team t2 
+     LEFT JOIN Club c2 ON t2.ID_Team = c2.ID_Club 
+     LEFT JOIN National_Team nt2 ON t2.ID_Team = nt2.ID_National_Team 
+     WHERE t2.ID_Team = gt.ID_Team_2) AS Team_Away
+FROM Game g
+JOIN Game_Teams gt ON g.ID_Game = gt.ID_Game
+JOIN Competition comp ON g.ID_Competition = comp.ID_Competition;
