@@ -1,0 +1,2 @@
+1. Ouvrir les fichiers du modèle conceptuel et du modèle logique de données dans DB-Main.
+2. Compiler le code DDL dans pgAdmin (PostgreSQL), puis se connecter à DBSchema pour visualiser le modèle relationnel.
